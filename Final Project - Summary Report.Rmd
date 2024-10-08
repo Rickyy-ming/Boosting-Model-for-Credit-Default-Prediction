@@ -1,0 +1,438 @@
+---
+title: "Final Project - Summary Report"
+author: "Ricardo Lu"
+date: '2022-07-18'
+output: 
+    html_document:
+      toc: yes 
+      toc_float: yes
+      theme: readable
+---
+
+
+**Set up**
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(tidymodels)
+library(doParallel)
+library(knitr)
+library(GGally)
+library(scales)
+library(tictoc)
+library(kernlab)
+```
+### Load Data
+```{r}
+Default<-read.csv('default of credit card clients - adapted.csv')
+load('Log.Rda')
+load('knn.Rda')
+load('boost.Rda')
+
+
+
+```
+### Split Data
+  
+split the data with 70% for training and 30x`% for testing Stratify on customers' default status. 
+
+```{r}
+
+set.seed(1267)
+default_split <- initial_split(Default, prop = 0.70, 
+                              strata = is_default)
+default_train <- training(default_split)
+default_test <- testing(default_split)
+
+```
+
+
+# Introduction 
+
+### Problem statement
+Credit card default has always been a common and significant problem for all the major financial service providers. When a credit card user have unpaid balance on their credit card and they do not pay their bill, they default on their credit card. If they do not pay their negative balance on their credit card, it would incur a loss to the financial institution, as they have to take the losses. According to the Federal Reserve economic data, the default rate on credit loans is increasing and it is likely to continue to climb, which could result in a significant amount money lose from the financial institutions. If financial institutions could properly predict which customers have the highest probability of defaulting, it could help them save significant amount of money each year.
+
+
+### Project objective
+The objective of this project is to predict the credit card users who are more likely to default for the next month. We will train the models to predict the payment status of the customers in advanced using the credit history, payment history and other factors such as age, education level. 
+
+
+### Overview of report sections
+The report will have eight sections:
+**Introduction**: The first section  will summarize the business problem we are aiming to solve and the objective of this experiment, as well as our recommendation for the best performing model. 
+**Methodology**: The second section will give an overview about modelling process methodology we use in the experiment, including model selection, data splitting, feature engineering as well as the performance metric we used. 
+**Data**: The third section Data will introduce the data variables, and EDA analysis on the data set. We will look at the data set through visualization, examing relationships between the predictors and response. 
+**Baseline Model**: The baseline model has a low performance but a relatively short training time, and it could be explained easily. The section will report the result of the model, as well as the rationale of choosing it, and its parameters and processing step. 
+**Low-complexity model**: The low complexity model will have a moderate performance compared to the Best-Performing model. The section will report the result of the model, as well as the rationale of choosing it, and its parameters and processing step. 
+**Best-Performing Model**: The best performing model will outperform other models and have the best roc auc value. The section will report the result of the model, as well as the rationale of choosing it, and its parameters and processing step.
+**Test result*: Fitting the low-complexity model and best performing model on the training dataset and evaluating them on testing data set, using different performance visuliazation and metrics.
+**Conclusion**: Recommend the final model from the two models, and how to utilize the model to address the underlying business problem. 
+
+### Executive summary of model recommendations
+The experiment has enabled us to predict the customers of financial institution that would likely to get defaulted in the future using the historical data. In the experiment we used three different models: KNN, Logistic Regression and Boosting. It was observed that Logistic regression, as the low-complexity model and boosting, as the best-performing model, have the similar performance, with boosting model has slightly better performance but longer training time. The model recommendation is to use two different models when facing with different business contexts.
+
+
+# Methodology
+
+### Overview of modeling process
+The initial selection of models is based on my understanding of model features. For example, the general views on KNN model are simplistic and intuitive, the parameter of KNN is also very easy to explain, which I think might be suitable to be my baseline or low-complexity model. The second step is to create and train my initial selection of models, comparing the performance metrics between them as well as decide the trade-off between computation time and the performance. The second step is the most time-consuming step, as the result of the training models might not be very suitable for this experiment, then it is necessary to test out other models, which would require another round of training. The initial selection for my models was kNN model, Logistic Regression Model and RBF SVM model. But during the process of training, the tuning time of the RBF SVM model is too long, which only resulted a slight increase in the performance metrics, therefore the RBF SVM model is replaced by the Boosting model. 
+
+### Model selection 
+The tuning process for different model types are different. For the KNN model and Logistic Regression model, the computing hyperparameters required for these two type of model is less than the Boosting model, therefore the tuning process contains three round for KNN model and Logistic Regression model. In the first round and second round, we compared two different models with two different recipes, to evaluate these two different recipes. In the third round after we decided the best-performed recipe, we will start the third round of tuning and define hyperparameter based on the results from the second round. The selection of parameter values will be close to the the value of best performed model in the second round of tuning. For boosting model, since it has multiple parameters, the tuning process contains four round, each round we would only tune one parameter. In the first round we would find the optimal value of the parameter by selecting the best performed model, then in the second round we would use the best value from the first round, then determine the best value of next parameter.  
+
+For all the model tuning process, we used the Latin hypercubes in the all rounds of tuning except for the final round of tuning, as a Latin hypercube is useful for the first round of tuning for slow-training models. For the final round, since we are redefining the value of parameters in a smaller range, I believe the regular grid is enough. 
+
+
+
+### Performance metrics
+
+The performance metric we chose in this experiment are Roc Auc value, Precision, Recall and Accuracy, which are four metrics for classification problem. We used the Roc Auc value as our optimization metric. We used these performance metric to compare the performance between different models, with use of optimization metric to select the best model, as it is the most general metric for how well the classification is going.
+
+* ROC AUC directly shows the performance of a classification model at all threshold. You could directly see the trade off between sensitivity and specificity for all possible thresholds rather than just the one that was chosen by the modeling technique.
+
+* Accuracy describes the proportion of observations that were classified correctly.
+* Precision describes the fraction of truly positive outcome among the outcomes that are predicted as positive
+* Recall shows the fraction of positive predictions among the outcomes that are truly positive.
+
+### Data splits and resampling
+In the experiment, we split the data into one set that will be used to develop models, preprocess the predictors, and explore relationships among the predictors and the response and another that will be used to validate and test the final model we chose. In the splitting, 70% of the data were allocated to the training set and will used to develop and train the model, 30% of the data set will be used to test the final model. As we allocate more data to the training data, the model will have a low bias since the model has more capacity to learn from the training data, but the variance error would increase, the model may be too sensitive to the training data. 
+
+For cross validation, we used 5-fold cross validation with 5 repetition. It means that we divided the data set into 5 subsets, out of these folds, one subset is used as a validation set, and rest others are involved in training the model. We repeats the process for 5 times of splitting the data into k-folds. The k is set equal to the number of instances, the error estimate is then very low in bias but has the possibility of high variance, which means that the model could fit very well with the training dataset but not so well when we change the dataset. 
+
+
+### Feature engineering
+
+In the experiment we used two different recipes to decide the optimal preprocessing steps to improve the model performance. For Logistic Regression model and KNN model, the base recipe contains the standard preprocessing steps, which are recommended in Appendix for baseline levels of preprocessing that are needed for various model functions. Since there are categorical variables existing in the dataset, we used step_dummy() to convert them into one or more numeric binary model terms. We normalize and filter the data using step_zv and step_normalize and transform the data with step_YeoJohnson.  
+
+For enhanced recipe, which added more non-standard preprocessing step on the basis of base recipe, we used:
+* step_mutate() to create new variables such as ratio of the payment amount to the bill amount, and bill amount status to improve the performance of the models. 
+
+
+# Data
+
+### Data description
+```{r}
+glimpse(Default)
+```
+
+* The data set has 30,000 rows and 25 columns.
+* Column names:
+  * id
+  * limit_balance: amount of given credit (includes individual and family/supplementary credit)
+  * gender: gender (male, female)
+  * educ_level: (graduate school, university, high school, others, unknown 1, unknown 2)
+  * marital: marital status (married, single, others)
+  * age: age in years
+  * pay_0: repayment status in September 2005
+  * pay_2: repayment status in August 2005
+  * pay_3: repayment status in July 2005
+  * pay_4: repayment status in June 2005
+  * pay_5: repayment status in May 2005
+  * pay_6: repayment status in April 2005
+  * bill_amount1: amount of bill statement in September 2005
+  * bill_amount2: amount of bill statement in August 2005
+  * bill_amount3: amount of bill statement in July 2005
+  * bill_amount4: amount of bill statement in June 2005
+  * bill_amount5: amount of bill statement in May 2005
+  * bill_amount6: amount of bill statement in April 2005
+  * pay_amount1: amount of previous payment in September 2005
+  * pay_amount2: amount of previous payment in August 2005
+  * pay_amount3: amount of previous payment in July 2005
+  * pay_amount4: amount of previous payment in June 2005
+  * pay_amount5: amount of previous payment in May 2005
+  * pay_amount6: amount of previous payment in April 2005
+
+### Exploratory data analysis
+
+**Data quality**
+
+```{r}
+sum(is.na(Default))
+
+
+```
+```{r}
+sum(duplicated(Default))
+
+```
+* There is no missing values or duplicated rows in the data.
+
+
+**Data visualizations**
+
+
+
+```{r warning = FALSE, message = FALSE}
+ Metric_Numeric <- Default %>%
+    pivot_longer(cols = -c(is_default, id,age,gender,educ_level,marital),
+                 names_to = 'predictor',
+                 values_to = 'value')
+
+Metric_Numeric %>%  
+ggplot(aes(x = is_default, y = value, fill = is_default)) +
+    geom_boxplot() +
+    facet_wrap(~ predictor, scales = 'free_y') +
+    scale_y_log10(labels = comma_format()) +
+    scale_fill_brewer(palette = 'Dark2', type = 'qual') +
+    guides(fill = 'none') +
+    labs(title = 'Frequency of Defaults',
+         x = 'Default',
+         y = 'Frequency') +
+    theme_minimal()
+```
+
+* For bill amount and pay amount, the overall distributions of bill amount on two default status is almost the same, with few outlierss existing. 
+  * IQR range value remained almost unchanged throughout the period.
+  * The large proportion of bill amount range from 2000 to 60000, with the range is decreasing with the time passing. 
+  * The large proportion of pay amount range from 2000 to 4000, which also similar trend as the bill amount. 
+  * It could be an indication that the pay amount and bill amount may not have great impact on default status.
+* The large proportion of value of repayment status seems gather around 2, which indicates that the most of payment would tend to delay for two months. There is no indication that the repayment status have strong relationships with the default status as the distribution of repayment status is the same for two status. 
+* For limit balance, people default on their credit account seems to have lower limit balance than people who do not default on their credit card payment, which seems reasonable as the people who always default on credit card payment would have bad credit score, which would limit their given credit. 
+
+```{r}
+Default %>%  
+  ggplot(aes(x = marital, fill = is_default)) +
+    geom_boxplot() +
+      geom_bar(stat = 'count') +
+    theme_minimal()  
+```
+  
+* The graph shows that the sing and married group tend to have similar probability on defaulting, as the number of defaulting people is the same iin these two group. 
+* The number of single people is more than the number of Married people.
+* There is no indication of strong relationships existing between marital status and default status. 
+
+```{r}
+Default %>%  
+  ggplot(aes(x = gender, fill = is_default)) +
+    geom_boxplot() +
+      geom_bar(stat = 'count') +
+    theme_minimal() 
+```
+  
+* Overall frequency indicates that the number of males is more than the number of female in the data set. 
+* It seems that the female  tend to default more than male, but could also be the reason that the total number of female is more than the total number of male in the data set. 
+* There is no indication of strong relationship existing between gender and default status. 
+
+```{r}
+Default %>%  
+  ggplot(aes(x = educ_level, fill = is_default)) +
+    geom_boxplot() +
+      geom_bar(stat = 'count') +
+    theme_minimal() 
+```
+
+* The number of people in university account for the most percentage in the data set, which followed by the number of graduate people. 
+* There is no indication that there is strong relationship existing between educational level and default status, even though the number of people defaulting is different in each group, but the total number of people in each group is also different. 
+**Summary table**
+```{r}
+
+descriptive_summary <- Metric_Numeric %>%
+    group_by(predictor) %>%
+    summarize(Min = min(value, na.rm = TRUE),
+              Q1 = quantile(value, 0.25, na.rm = TRUE),
+              Median = median(value, na.rm = TRUE),
+              Mean = mean(value, na.rm = TRUE),
+              Q3 = quantile(value, 0.75, na.rm = TRUE),
+              Max = max(value, na.rm = TRUE),
+              SD = sd(value, na.rm = TRUE),
+              IQR = IQR(value, na.rm = TRUE),
+              .groups = 'drop_last')
+
+descriptive_summary %>%
+    kable(digits = 2, 
+          format.args = list('big.mark' = ','),
+          caption = 'Summary of Predictor Values')
+```
+
+The table shows the statistics for all the numerical variables.
+* The average of negative balance on repayment status shows that on average people tend to pay duly on their credit card.
+* The bill amount in April 2005 has the lowest average, the average amount of billing decreased throughout the period, but overall the bill amounts in each month are very close to each other. 
+* The large IQR on limit balance indicates that the difference in amount of given creidt for different accounts is significant.
+* The average of payments started to drop after July 2005. The maximum payments in the month is usually smaller than the maximum billing amount. 
+
+# Baseline model
+* In KNN model, the object being assigned to the class most common among its k nearest neighbors. In other words, KNN classifies data points based on the points that are most similar to it. The pros of KNN model is easy to use, quick calculation time and does not make assumptions about the data, which is very suitable for the baseline model in my initial consideration. 
+* The parameter of neighbor measures the k closest training examples KNN will use when classifying object. 
+* For preprocessing step, I used two different recipes in this experiment to decide the optimal preprocessing steps, the base recipe contains the standard preprocessing steps, which are recommended in Appendix for baseline levels of preprocessing that are needed for various model functions. And the enhanced recipe contains the more variables such as ratio of the payment amount to the bill amount, and bill amount status to improve the performance of the models. 
+  * For KNN model, the results showed that the model with enhanced recipe actually performed worse than the model with base recipe, which could due to the reason that the KNN model does not work well with large dataset as we increased many new variables in the enhanced recipe. 
+```{r}
+KNN_Metric_best_4<- knn_metrics_best %>% 
+      filter(.config == knn_by_std_err[['.config']])
+KNN_Metric_best_4 %>%
+    kable(digits = 4)
+
+```
+```{r}
+conf_knn
+```
+
+* The best model from KNN gives a roc auc value of 0.74 and a very high recall value of 0.95 and precision value of 0.81, which indicates that the model could generate high number of positive class predictions made out of all positive examples in the dataset with high precision rate.
+* The number of True positive and true negative for best performed KNN model is 15648 and 1173 respectively, which is significant higher than the number of false positive and false negative. 
+
+
+```{r}
+knn_by_std_err
+```
+* The table shows that the best combination of hyperparameter for KNN model is 44 neighbbors.
+
+# Low-complexity Model
+* We decided to use logistic regression model as our low complexity model. Since that:
+  * The logistic regression model only has two hyperparamete, which is lower comparing with the best performing model. 
+  * The logistic regression model is easy to explained and use comparing with the best performing model. 
+* Logistic regression is a supervised learning classification algorithm used to predict the probability of a target variable. It is about predicting a continuous output, by finding the correlations between dependent and independent variables.
+* The penalty parameter impose a penalty to the logistic model for having too many variables. This results in shrinking the coefficients of the less contributive variables toward zero. And the mixture parameter defines 
+* For the preprocessing step, two different recipes were used in this experiment to decide the optimal preprocessing steps, the base recipe contains the standard preprocessing steps, which are recommended in Appendix for baseline levels of preprocessing that are needed for various model functions. And the enhanced recipe contains the more variables such as ratio of the payment amount to the bill amount, and bill amount status to improve the performance of the models. 
+  * Different than the baseline model, the model with enhanced recipe performed better than models with base recipe. 
+```{r}
+log_Metric_best_4<- log_metrics_best %>% 
+      filter(.config ==log_by_std_err[['.config']])
+log_Metric_best_4 %>%
+    kable(digits = 4)
+```
+
+* The best performed logistic regression model gives a roc auc value of 0.77. Compare to baseline model, it has a higher recall value of 0.96 and precision value of 0.83, which indicates that the model could generate high number of positive class predictions made out of all positive examples in the dataset with high precision rate.
+* The roc auc value of best performed logistic regression model is higher than the KNN model. 
+```{r}
+log_by_std_err
+```
+* The best performed logistic regression model has a best combination of 0.00001 of penalty and 0.25 mixture. 
+
+# Best-performing Model
+* For the best performing model, we used boosting model as it is more complex than the logistic regression. Also, it is one of the most powerful ensemble algorithms that are often first-in-class with predictive accurac, which I believed that would generate the the best result. 
+* Gradient boosting model relies on the intuition that the best possible next model, when combined with previous models, minimizes the overall prediction error. It combines the predictions from multiple decision trees to generate the final predictions.
+* The preprocessing step for boosting model is different than the other two models, which only used the enhanced recipe, since it is demonstrated by the logistic model that it could better improve the performance of models. 
+```{r}
+boost_metrics_best_4
+
+```
+* The best performed boosting model has a roc auc value of 0.78, which is only 0.01 higher than the low complexity model. There is a slight increase in recall value  and the precision value comparing with low complexity model. 
+  * As we look at the average training time of tuning process, the training time for boosting model is 40 min while the training time for logistic regression model is 25 min. 
+  * The time difference is not significant, but once we adapt significant large dataset, the training time for boosting model could be very long while only havs marginal increase on performance. 
+  * But since the time difference seems not significant in this experiment, the use of these two models could depend on the management's strategy as well as business need. 
+
+ 
+
+
+
+
+# Test Results
+
+### Low-complexity model
+```{r}
+final_model_fit1<-final_workflow_log %>% 
+  fit(default_train)
+
+final_predictions_log <- predict(final_model_fit1, new_data = default_test)
+
+default_test_log <- default_test %>%
+    bind_cols(final_predictions_log)
+```
+
+### Confusion Matrix
+```{r}
+log_predictions <- log_results_best %>%
+    collect_predictions(parameters = log_by_std_err) 
+
+
+
+log_confusion <- conf_mat(data = log_predictions, 
+                            truth = is_default, 
+                            estimate = .pred_class) 
+
+log_confusion
+
+
+```
+
+
+### ROC AUC Curve
+```{r}
+log_roc_curve <- autoplot(
+    roc_curve(
+        data = log_predictions, 
+        truth = is_default, 
+        estimate = .pred_No
+        )
+    )
+
+log_roc_curve
+```
+
+### Precision Recall Curve
+```{r}
+log_pr_curve <- autoplot(
+    pr_curve(
+        data = log_predictions, 
+        truth = is_default, 
+        estimate = .pred_Yes
+        )
+    )
+
+log_pr_curve
+```
+
+**Results**
+
+* The number of True positive and true negative for best performed logistic regression model is 7086 and 78573 respectively, which is significant higher than the number of false positive and false negative. 
+* The precision-recall curve shows the tradeoff between precision and recall for different threshold. For low complexity model, the graph shows that as the recall value increases, the model shows a higher and higher precision as when it classifies the people will default on their credit card.
+* The ROC curve shows the trade off between sensitivity and specificity. The area under the curve represents the degree or measure of separability. In this graph, it shows that the model is able to classify the people who will not default on their credit account, with a good score of auc value around 0.7.
+
+
+### Best Performing Model
+```{r}
+final_model_fit2<-final_boost_workflow %>% 
+  fit(default_train)
+
+final_predictions <- predict(final_model_fit2, new_data = default_test)
+```
+
+### Confusion Matrix
+```{r}
+boost_predictions <- boost_results_4 %>%
+    collect_predictions(parameters = boost_best_4) 
+
+boost_confusion <- conf_mat(data = boost_predictions, 
+                            truth = is_default, 
+                            estimate = .pred_class) 
+
+boost_confusion
+```
+
+### ROC AUC curve
+```{r}
+boost_roc_curve <- autoplot(
+    roc_curve(
+        data = boost_predictions, 
+        truth = is_default, 
+        estimate = .pred_No
+        )
+    )
+
+boost_roc_curve
+```
+
+### Precision Recall Curve
+```{r}
+boost_pr_curve <- autoplot(
+    pr_curve(
+        data = boost_predictions, 
+        truth = is_default, 
+        estimate = .pred_Yes
+        )
+    )
+
+boost_pr_curve
+```
+
+* The number of True positive and true negative for best performed logistic regression model is 77704 and 8509 respectively, which is also significant higher than the number of false positive and false negative. 
+  * Comparing with low complexity model, it generates significantly more predictions with high precision rate.
+* Similar to the ow complexity model, the best performing model:
+  * has the precision-recall curve shows that as the recall value increases, the model shows a higher and higher precision as when it classifies the people will default on their credit card.
+* The ROC curve shows the trade off between sensitivity and specificity. The Roc auc graph shows that the model is able to classify the people who will not default on their credit account, with a good score of roc auc value around 0.7.
+
+# Conclusion
+* Based on my previous experiments and results from the testing, the low complexity and best-performing model seems to have the same performance, with best-performing model has slightly higher roc auc value. As we consider the time and performance trade off, the best-performing model takes more time to train than low-complexity model. Even though the time difference is not significant in this experiment, but as mentioned above, one potential business problem implied is that if we use larger data set for other business context in the future, the time could be an important factor to consider for the management. I would recommend management to use both models when facing different business context.
+* The result also shows that both models are good at predicting people who will not default on their credit account but have less correct predictions on people who will default. The best-performing model has slightly better performance on predicting the true positive class. 
+* From the result above, I would recommend to management that in the business circumstance where the context has time limit and less restriction on precision, it would be better for the management to use low-complexity model. When the financial institutions faced with customers with low credit score, it would be better to use best-performing model since it could predict more true positive class. 
+* In advanced of improving the performance of model, I would say that the past 6 months data of default status may still  not enough to predict the future, incorporating more data into the model would be helpful to improve the model performance. Also, for the first time credit card applier the model may not work very well as they have no given credit or payment/billing history. Adding more variables such as credit score could be helpful to improve the performance. Additionally, the performance between the base recipe and enhanced recipe is not significant, it would decrease the training time of model when there is a time limit as the base recipe creates less variables than enhanced recipe. 
+* Since the predictions are based on machine learning from historical data, it is normal that the predictions would fail sometimes, which could incur some loss for the financial institution. It would necessary for financial institutions to estimate the potential loss on credit card default and set up extra money for loss and not rely completely on model. 
+
