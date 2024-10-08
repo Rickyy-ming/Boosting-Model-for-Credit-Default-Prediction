@@ -1,0 +1,395 @@
+---
+title: "Final Project - Logistic Regression"
+author: "Ricardo Lu"
+date: '2022-07-19'
+output: 
+    html_document:
+      toc: yes 
+      toc_float: yes
+      theme: readable
+---
+**Set up**
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(tidymodels)
+library(doParallel)
+library(knitr)
+library(GGally)
+library(scales)
+library(tictoc)
+library(kernlab)
+```
+# Modeling Experiments
+
+### Load Data
+```{r}
+Default<-read.csv('default of credit card clients - adapted.csv')
+```
+
+
+### Define Metrics
+
+To measure performance, we have following metrics: ROC AUC, accuracy, precision, and recall. ROC AUC is the optimization metric.
+
+```{r}
+my_metrics <- metric_set(roc_auc,accuracy,precision,recall)
+```
+
+### Split Data
+  
+split the data with 70% for training and 30% for testing Stratify on customers' default status. 
+
+```{r}
+
+set.seed(1267)
+default_split <- initial_split(Default, prop = 0.70, 
+                              strata = is_default)
+default_train <- training(default_split)
+default_test <- testing(default_split)
+
+```
+
+### Create the Resamples
+
+For cross validation, we used 5-fold cross validation with 5 repetition. It means that we divided the data set into 5 subsets, out of these folds, one subset is used as a validation set, and rest others are involved in training the model. We repeats the process for 5 times of splitting the data into k-folds
+
+```{r}
+set.seed(1342)
+default_folds <- default_train %>%
+    vfold_cv(v = 5, repeats = 5, strata = is_default)
+```
+
+# Construct workflow
+
+
+### Preprocessing recipe
+```{r}
+ log_recipe_base<-
+   recipe(is_default ~ ., data = default_train) %>% 
+   step_zv(all_numeric_predictors()) %>% 
+    step_YeoJohnson(all_numeric_predictors()) %>% 
+   step_normalize(all_numeric_predictors()) %>% 
+   step_dummy(all_nominal_predictors())  %>% 
+  step_corr(all_numeric_predictors())
+
+
+log_recipe_enhanced<-log_recipe_base %>% 
+  step_mutate_at(matches('_amount[1-6]'), fn = as.numeric) %>%
+  step_mutate_at(matches('pay_[0-6]'), fn = as.numeric) %>%
+   step_mutate(
+       bill_amount_credit1 = bill_amount1 < 0,
+         bill_amount_credit2 = bill_amount2 < 0,
+         bill_amount_credit3 = bill_amount3 < 0,
+         bill_amount_credit4 = bill_amount4 < 0,
+         bill_amount_credit5 = bill_amount5 < 0,
+         bill_amount_credit6 = bill_amount6 < 0,
+         pay_status1 = pay_0 < 0,
+         pay_status2 = pay_2 < 0,
+         pay_status3 = pay_3 < 0,
+         pay_status4 = pay_4 < 0,
+         pay_status5 = pay_5 < 0,
+        pay_status6 = pay_6 < 0,
+         repayment = sum(pay_amount1,pay_amount2,pay_amount3,pay_amount4,pay_amount5,pay_amount6)/sum(bill_amount1,bill_amount2,bill_amount3,bill_amount4,bill_amount5,bill_amount6)) %>%
+    step_mutate_at(matches('credit'), fn = as.numeric) %>%
+    step_mutate_at(matches('bill_amount[1-6]'), fn = ~ if_else(. < 0, 0, .)) %>%
+    step_mutate_at(matches('status'), fn = as.numeric) %>%
+    step_mutate_at(matches('pay[0-6]'), fn = ~ if_else(. < 0, 0, .))
+
+ 
+```
+
+
+
+
+### Create a Model
+```{r}
+log_reg_model <-
+    logistic_reg(penalty = tune(),
+                 mixture = tune()) %>%
+  set_mode('classification')%>% 
+    set_engine('glmnet') 
+
+
+log_reg_grid <- grid_latin_hypercube(
+    penalty(),
+    mixture(),
+    size = 25
+)
+
+
+```
+
+### Define the workflow
+```{r}
+log_reg_workflow_base <-
+    workflow() %>%
+    add_recipe(log_recipe_base) %>%
+    add_model(log_reg_model)
+
+log_reg_workflow_enhanced <-
+    workflow() %>%
+    add_recipe(log_recipe_enhanced) %>%
+    add_model(log_reg_model)
+```
+
+**Setup Parallelization**
+```{r}
+library(doParallel)
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makePSOCKcluster(number_of_cores)
+registerDoParallel(cluster)
+```
+# Tune the first model
+
+
+```{r warning = FALSE, Message = FALSE}
+log_control <- control_resamples(save_pred = TRUE)
+
+
+tic()
+
+log_results_base <-
+    log_reg_workflow_base %>%
+    tune_grid(
+        default_folds,
+        grid = log_reg_grid,
+        metrics = my_metrics,
+        control = log_control
+    )
+
+toc()
+
+```
+
+**Stop Parallelization**
+
+```{r}
+stopCluster(cluster)
+```
+
+
+### Collecting the Performance Metrics
+
+
+```{r}
+
+log_metrics_base <- log_results_base %>%
+    collect_metrics() %>% 
+      mutate(recipe = 'Base')
+
+log_metrics_base
+```
+
+ 
+```{r}
+
+log_base_roc <- log_results_base %>%
+    show_best(metric = 'roc_auc') %>% 
+  mutate(Metric = "Roc Auc")
+
+log_base_accuracy <- log_results_base %>%
+    show_best(metric = 'accuracy')%>% 
+  mutate(Metric = "Accuracy")
+
+log_base_precision <- log_results_base %>%
+    show_best(metric = 'precision')%>%
+  mutate(Metric = "Precision") 
+
+log_base_recall <- log_results_base %>%
+    show_best(metric = 'recall')%>% 
+  mutate(Metric = "Recall") 
+
+log_best_base <- bind_rows(log_base_roc,log_base_accuracy,log_base_precision,log_base_accuracy) %>% 
+  kable(digits = 3,
+        caption = "Performance metric - Base Logistic Regression")
+log_best_base
+```
+
+* The model with base recipe has the highest roc auc value of 0.744.
+
+**Setup Parallelization**
+```{r}
+library(doParallel)
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makePSOCKcluster(number_of_cores)
+registerDoParallel(cluster)
+```
+# Tune the second model
+
+
+```{r warning = FALSE, Message = FALSE}
+log_control <- control_resamples(save_pred = TRUE)
+
+
+tic()
+
+log_results_enhanced <-
+    log_reg_workflow_enhanced %>%
+    tune_grid(
+        default_folds,
+        grid = log_reg_grid,
+        metrics = my_metrics,
+        control = log_control
+    )
+
+toc()
+
+```
+
+**Stop Parallelization**
+
+```{r}
+stopCluster(cluster)
+```
+
+### Collecting the Performance Metrics
+
+
+```{r}
+
+log_metrics_enhanced <- log_results_enhanced %>%
+    collect_metrics() %>% 
+      mutate(recipe = 'Enhanced')
+
+log_metrics_enhanced
+```
+
+```{r}
+
+log_enhanced_roc <- log_results_enhanced %>%
+    show_best(metric = 'roc_auc') %>% 
+  mutate(Metric = "Roc Auc")
+
+log_enhanced_accuracy <- log_results_enhanced %>%
+    show_best(metric = 'accuracy')%>% 
+  mutate(Metric = "Accuracy")
+
+log_enhanced_precision <- log_results_enhanced %>%
+    show_best(metric = 'precision')%>%
+  mutate(Metric = "Precision") 
+
+log_enhanced_recall <- log_results_enhanced %>%
+    show_best(metric = 'recall')%>% 
+  mutate(Metric = "Recall") 
+
+log_best_enhanced <- bind_rows(log_enhanced_roc,log_enhanced_accuracy,log_enhanced_precision,log_enhanced_accuracy) %>% 
+  kable(digits = 3,
+        caption = "Performance metric - Enhanced logistic regression")
+log_best_enhanced
+```
+
+* The enhanced recipe model has the highest value of 0.771, which is higher than the model with base recipe. 
+
+# Tune the thrid model
+
+**Setup Parallelization**
+```{r}
+library(doParallel)
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makePSOCKcluster(number_of_cores)
+registerDoParallel(cluster)
+```
+
+```{r warning = FALSE, Message = FALSE}
+log_reg_grid2 <- grid_regular(penalty(range = c(-5,1)), 
+                          mixture(range = c(0.25,1)),
+                         levels = c(10,5))
+
+log_control <- control_resamples(save_pred = TRUE)
+
+
+tic()
+
+log_results_best <-
+    log_reg_workflow_enhanced %>%
+    tune_grid(
+        default_folds,
+        grid = log_reg_grid2,
+        metrics = my_metrics,
+        control = log_control
+    )
+
+toc()
+```
+
+
+### Collecting the Performance Metrics
+
+
+```{r}
+
+log_metrics_best <- log_results_best %>%
+    collect_metrics() 
+
+log_metrics_best
+```
+
+```{r}
+
+log_best_roc <- log_results_best %>%
+    show_best(metric = 'roc_auc') %>% 
+  mutate(Metric = "Roc Auc")
+
+log_best_accuracy <- log_results_best %>%
+    show_best(metric = 'accuracy')%>% 
+  mutate(Metric = "Accuracy")
+
+log_best_precision <- log_results_best %>%
+    show_best(metric = 'precision')%>%
+  mutate(Metric = "Precision") 
+
+log_best_recall <- log_results_best %>%
+    show_best(metric = 'recall')%>% 
+  mutate(Metric = "Recall") 
+
+log_best <- bind_rows(log_best_roc,log_best_accuracy,log_best_precision,log_best_accuracy) %>% 
+  kable(digits = 3,
+        caption = "Performance metric - best log")
+log_best
+```
+
+* The model with enhanced recipe after the third round of tuning has the highest roc auc value of 0.771, which is the same as the result from the second round of tuning. 
+
+
+# Conclude the Experiment
+
+## Confusion Matrix
+
+### Select an optimal model
+
+  
+  we selected the least complex model that is still within one standard error from the best-performing model.
+  
+```{r}
+log_by_std_err <- log_results_best %>%
+    select_by_one_std_err(metric = 'roc_auc', penalty)
+
+log_by_std_err %>%
+    kable(digits = 3,
+          caption = 'Optimal Model after Adjusting by Standard Error')
+```
+  
+```{r}
+conf_log <- log_results_best %>%
+  conf_mat_resampled(parameters = log_by_std_err)
+
+conf_log %>%
+  kable()
+
+```
+
+### Finalize the workflow
+```{r}
+final_workflow_log<-log_reg_workflow_enhanced %>% 
+  finalize_workflow(log_by_std_err)
+```
+
+## Save results to external files
+
+```{r}
+save(log_by_std_err,conf_log,log_metrics_best,log_best_enhanced,log_best_base,log_reg_workflow_base,final_workflow_log,log_results_best,file = 'Log.Rda')
+```
+
