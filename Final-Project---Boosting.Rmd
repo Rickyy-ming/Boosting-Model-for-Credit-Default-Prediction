@@ -1,0 +1,499 @@
+---
+title: "Final Project - Boosting"
+author: "Ricardo Lu"
+date: '2022-07-19'
+output: 
+    html_document:
+      toc: yes 
+      toc_float: yes
+      theme: readable
+---
+
+
+
+**Set up**
+```{r warning = FALSE, message = FALSE}
+library(tidyverse)
+library(tidymodels)
+library(doParallel)
+library(knitr)
+library(GGally)
+library(scales)
+library(tictoc)
+library(kernlab)
+```
+# Modeling Experiments
+
+### Load Data
+```{r}
+Default<-read.csv('default of credit card clients - adapted.csv')
+```
+
+
+### Define Metrics
+
+To measure performance, we have following metrics: ROC AUC, accuracy, precision, and recall. ROC AUC is the optimization metric.
+
+```{r}
+my_metrics <- metric_set(roc_auc,accuracy,precision,recall)
+```
+
+### Split Data
+  
+split the data with 70% for training and 30% for testing Stratify on customers' default status. 
+
+```{r}
+
+set.seed(1267)
+default_split <- initial_split(Default, prop = 0.70, 
+                              strata = is_default)
+default_train <- training(default_split)
+default_test <- testing(default_split)
+
+```
+
+### Create the Resamples
+For cross validation, we used 5-fold cross validation with 5 repetition. It means that we divided the data set into 5 subsets, out of these folds, one subset is used as a validation set, and rest others are involved in training the model. We repeats the process for 5 times of splitting the data into k-folds
+
+
+```{r}
+set.seed(1342)
+default_folds <- default_train %>%
+    vfold_cv(v = 5, repeats = 5, strata = is_default)
+```
+
+# Construct workflow
+
+
+### Preprocessing recipe
+```{r}
+ boost_recipe<-
+   recipe(is_default ~ ., data = default_train) %>% 
+   step_zv(all_numeric_predictors()) %>% 
+    step_YeoJohnson(all_numeric_predictors()) %>% 
+   step_dummy(all_nominal_predictors()) %>% 
+  step_mutate_at(matches('_amount[1-6]'), fn = as.numeric) %>%
+  step_mutate_at(matches('pay_[0-6]'), fn = as.numeric) %>%
+   step_mutate(
+       bill_amount_credit1 = bill_amount1 < 0,
+         bill_amount_credit2 = bill_amount2 < 0,
+         bill_amount_credit3 = bill_amount3 < 0,
+         bill_amount_credit4 = bill_amount4 < 0,
+         bill_amount_credit5 = bill_amount5 < 0,
+         bill_amount_credit6 = bill_amount6 < 0,
+         pay_status1 = pay_0 < 0,
+         pay_status2 = pay_2 < 0,
+         pay_status3 = pay_3 < 0,
+         pay_status4 = pay_4 < 0,
+         pay_status5 = pay_5 < 0,
+        pay_status6 = pay_6 < 0,
+         repayment = sum(pay_amount1,pay_amount2,pay_amount3,pay_amount4,pay_amount5,pay_amount6)/sum(bill_amount1,bill_amount2,bill_amount3,bill_amount4,bill_amount5,bill_amount6)) %>%
+    step_mutate_at(matches('credit'), fn = as.numeric) %>%
+    step_mutate_at(matches('bill_amount[1-6]'), fn = ~ if_else(. < 0, 0, .)) %>%
+    step_mutate_at(matches('status'), fn = as.numeric) %>%
+    step_mutate_at(matches('pay[0-6]'), fn = ~ if_else(. < 0, 0, .))
+
+ 
+```
+
+### Model
+```{r}
+boost_model <-
+    boost_tree(trees = tune()) %>%
+    set_mode(('classification')) %>%
+    set_engine('xgboost')  
+
+
+
+
+
+```
+
+### Define the workflow
+```{r}
+boost_wf <-
+    workflow() %>%
+    add_recipe(boost_recipe) %>%
+    add_model(boost_model)
+
+
+```
+
+**Setup Parallelization**
+```{r}
+library(doParallel)
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makePSOCKcluster(number_of_cores)
+registerDoParallel(cluster)
+```
+# Tune the first model
+
+### Define a Hyperparameter Grid
+
+```{r}
+boost_grid <- grid_latin_hypercube(
+    trees(),
+    size = 10)
+```
+
+
+```{r warning = FALSE, Message = FALSE}
+boost_control <- control_resamples(save_pred = TRUE)
+
+
+tic()
+
+boost_results_1 <-
+    boost_wf %>%
+    tune_grid(
+        default_folds,
+        grid = boost_grid,
+        metrics = my_metrics,
+        control = boost_control
+    )
+
+toc()
+
+```
+
+**Stop Parallelization**
+
+```{r}
+stopCluster(cluster)
+```
+
+
+### Collecting the Performance Metrics
+
+
+```{r}
+
+boost_metrics_1 <- boost_results_1 %>%
+    collect_metrics()
+
+boost_metrics_1
+```
+### Show the Best Models
+```{r}
+
+boost_best_five_1 <- boost_results_1 %>%
+    show_best(metric = 'roc_auc')
+
+boost_best_five_1 %>%
+    kable(digits = 3, caption = "Best Models by roc_auc")
+```
+
+* The model with 5o trees has the highest roc auc value of 0.770. 
+
+### Select the Best Model 
+```{r}
+boost_best_1 <- boost_results_1 %>%
+    select_best(metric = 'roc_auc')
+
+boost_best_trees <- boost_best_1[['trees']]
+```
+
+
+
+
+
+# Tune the second model
+
+### Create a New Model
+```{r}
+boost_model_2 <-
+    boost_tree(trees = !!boost_best_trees,
+               learn_rate = tune()) %>%
+    set_mode(('classification')) %>%
+    set_engine('xgboost')
+```
+
+### Update the Workflow
+```{r}
+boost_wf<-
+    boost_wf %>%
+    update_model(boost_model_2)
+```
+### Define a Hyperparameter Grid
+```{r}
+boost_grid_2 <- grid_latin_hypercube(
+    learn_rate(),
+    size = 10
+)
+
+```
+
+**Setup Parallelization**
+
+```{r}
+library(doParallel)
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makePSOCKcluster(number_of_cores)
+registerDoParallel(cluster)
+
+```
+
+```{r warning = FALSE, Message = FALSE}
+boost_control <- control_resamples(save_pred = TRUE)
+
+
+tic()
+
+boost_results_2 <-
+    boost_wf %>%
+    tune_grid(
+        default_folds,
+        grid = boost_grid_2,
+        metrics = my_metrics,
+        control = boost_control
+    )
+
+toc()
+
+```
+**Stop Parallelization**
+
+```{r}
+stopCluster(cluster)
+```
+
+
+### Collecting the Performance Metrics
+
+
+```{r}
+boost_metrics_2 <- boost_results_2 %>%
+    collect_metrics()
+```
+
+### Show the Best Models
+```{r}
+
+boost_best_five_2 <- boost_results_2 %>%
+    show_best(metric = 'roc_auc')
+
+boost_best_five_2 %>%
+    kable(digits = 3, caption = "Best Models by roc_auc")
+```
+
+* After defining the number of trees, the model with 0.08 learn rate increased the roc auc value to 0.781. 
+
+### Select the Best Model
+```{r}
+boost_best_2 <- boost_results_2 %>%
+    select_best(metric = 'roc_auc')
+
+boost_best_learn_rate <- boost_best_2[['learn_rate']]
+
+```
+# Tune the third model
+
+
+
+### Create a New Model
+```{r}
+boost_model_3 <-
+    boost_tree(trees = !!boost_best_trees,
+               learn_rate = !!boost_best_learn_rate,
+               tree_depth = tune()) %>%
+    set_mode(('classification')) %>%
+    set_engine('xgboost')
+
+
+```
+
+
+### Update the Workflow
+```{r}
+boost_wf<-
+    boost_wf %>%
+    update_model(boost_model_3)
+```
+### Define a Hyperparameter Grid
+```{r}
+boost_grid_3 <- grid_regular(
+    tree_depth(),
+    levels = 10
+)
+```
+
+**Setup Parallelization**
+
+```{r}
+library(doParallel)
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makePSOCKcluster(number_of_cores)
+registerDoParallel(cluster)
+
+```
+
+```{r warning = FALSE, Message = FALSE}
+boost_control <- control_resamples(save_pred = TRUE)
+
+
+tic()
+
+boost_results_3 <-
+    boost_wf %>%
+    tune_grid(
+        default_folds,
+        grid = boost_grid_3,
+        metrics = my_metrics,
+        control = boost_control
+    )
+
+toc()
+
+```
+
+
+**Stop Parallelization**
+
+```{r}
+stopCluster(cluster)
+```
+
+
+
+### Collecting the Performance Metrics
+
+
+```{r}
+
+boost_metrics_3 <- boost_results_3 %>%
+    collect_metrics()
+```
+### Show the Best Models
+```{r}
+boost_best_five_3 <- boost_results_3 %>%
+    show_best(metric = 'roc_auc')
+
+boost_best_five_3 %>%
+    kable(digits = 3, caption = "Best Models by roc_auc")
+```
+* The model with 5 tree depth has the higher roc auc value of 0.782.
+
+### Select the Best Model
+```{r}
+boost_best_3 <- boost_results_3 %>%
+    select_best(metric = 'roc_auc')
+
+boost_best_tree_depth <- boost_best_3[['tree_depth']]
+```
+
+# Tune the Fourth Model
+
+
+### Create a New Model
+```{r}
+boost_model_4 <-
+    boost_tree(trees = !!boost_best_trees,
+               learn_rate = !!boost_best_learn_rate,
+                tree_depth = !!boost_best_tree_depth,
+               mtry = tune()) %>%
+    set_mode(('classification')) %>%
+    set_engine('xgboost')
+
+
+```
+
+
+### Update the Workflow
+```{r}
+boost_wf<-
+    boost_wf %>%
+    update_model(boost_model_4)
+```
+### Define a Hyperparameter Grid
+```{r}
+boost_grid_4 <- grid_regular(
+     finalize(mtry(), default_train),
+    levels = 10
+)
+```
+
+**Setup Parallelization**
+
+```{r}
+library(doParallel)
+
+number_of_cores <- parallel::detectCores(logical = FALSE)
+cluster <- makePSOCKcluster(number_of_cores)
+registerDoParallel(cluster)
+
+```
+
+```{r warning = FALSE, Message = FALSE}
+boost_control <- control_resamples(save_pred = TRUE)
+
+
+tic()
+
+boost_results_4 <-
+    boost_wf %>%
+    tune_grid(
+        default_folds,
+        grid = boost_grid_4,
+        metrics = my_metrics,
+        control = boost_control
+    )
+
+toc()
+
+```
+
+
+**Stop Parallelization**
+
+```{r}
+stopCluster(cluster)
+```
+
+# Selecting the Best Model
+
+### Collect Performance Metric
+```{r}
+boost_metrics_4 <- boost_results_4 %>%
+    collect_metrics()
+```
+
+
+```{r}
+boost_best_five_4 <- boost_results_4 %>%
+    show_best(metric = 'roc_auc')
+
+boost_best_five_4 %>%
+    kable(digits = 3, caption = "Best Models by roc_auc")
+```
+* After defining the number of mtry, the roc auc remained at the value of 0.781
+
+
+### Select the best Model
+```{r}
+boost_best_4 <- boost_results_4 %>%
+    select_best(metric = 'roc_auc')
+
+boost_metrics_best_4 <- boost_metrics_4 %>%
+    filter(.config == boost_best_4[['.config']])
+
+boost_metrics_best_4 %>%
+    kable(digits = 4)
+```
+
+### Finalize workflow
+```{r}
+final_boost_workflow<-boost_wf%>% 
+  finalize_workflow(boost_best_4)
+```
+
+
+
+## Save results to external files
+
+```{r}
+save(boost_wf, boost_metrics_4, boost_best_4, boost_metrics_best_4,final_boost_workflow,boost_results_4,
+     file = 'boost.Rda')
+```
